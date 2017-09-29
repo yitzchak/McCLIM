@@ -421,11 +421,11 @@ documentation produced by presentations.")
 
 (defmethod run-frame-top-level ((frame application-frame)
 				&key &allow-other-keys)
-  (letf (((frame-process frame) (current-process)))
-    (handler-case
-	(funcall (frame-top-level-lambda frame) frame)
-      (frame-exit ()
-	nil))))
+  (setf (frame-process frame) (current-process))
+  (handler-case
+      (funcall (frame-top-level-lambda frame) frame)
+    (frame-exit ()
+      (setf (frame-process frame) nil))))
 
 
 (defmethod run-frame-top-level :around ((frame application-frame) &key)
