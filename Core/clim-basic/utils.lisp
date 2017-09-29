@@ -119,6 +119,8 @@
       (first list)
       `(values ,@list)))
 
+(defvar *letf-lock* (bt:make-recursive-lock "Global lock for LETF scope."))
+
 (defmacro letf ((&rest forms) &body body &environment env)
   "LETF ({(Place Value)}*) Declaration* Form* During evaluation of the
 Forms, SETF the Places to the result of evaluating the Value forms.
@@ -154,14 +156,15 @@ evaluated."
 			new-values-set-form temp-new-values-set-form
 			old-values-set-form temp-old-values-set-form
 			update-form (cons 'progn temp-update-form)))
-    `(let* ,init-let-form
-       (setf ,@save-old-values-setf-form)
-       (unwind-protect
-            (progn (setf ,@new-values-set-form)
-                   ,update-form
-                   (progn ,@body))
-         (setf ,@old-values-set-form)
-         ,update-form))))
+    `(bt:with-recursive-lock-held (*letf-lock*)
+       (let* ,init-let-form
+         (setf ,@save-old-values-setf-form)
+         (unwind-protect
+              (progn (setf ,@new-values-set-form)
+                     ,update-form
+                     (progn ,@body))
+           (setf ,@old-values-set-form)
+           ,update-form)))))
 
 (defun map-repeated-sequence (result-type n function sequence)
   "Like CL:MAP, but applies \\arg{function} to \\arg{n} consecutive
