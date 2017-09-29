@@ -185,7 +185,8 @@
 	    (declare (ignorable medium))
 	    ,@body))
      (declare (dynamic-extent #'graphics-op))
-     (apply #'do-graphics-with-options ,sheet #'graphics-op ,args)))
+     (with-letf-lock ()
+       (apply #'do-graphics-with-options ,sheet #'graphics-op ,args))))
 
 (defmacro with-drawing-options ((medium &rest drawing-options) &body body)
   (setq medium (stream-designator-symbol medium '*standard-output*))
