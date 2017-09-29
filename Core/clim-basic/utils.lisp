@@ -168,10 +168,6 @@ evaluated."
            (setf ,@old-values-set-form)
            ,update-form)))))
 
-(defmacro with-stream-lock ((stream) &body body)
-  (declare (ignore stream))
-  `(with-letf-lock () ,@body))
-
 (defun map-repeated-sequence (result-type n function sequence)
   "Like CL:MAP, but applies \\arg{function} to \\arg{n} consecutive
 elements of \\arg{sequence}. All the function's return values will be
