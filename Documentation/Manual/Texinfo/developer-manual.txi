@@ -257,7 +257,7 @@ conversion method can look like. Assume that the custom presentation
 type is called @code{MARKUP-TEXT}.
 
 @verbatim
-(define-presentation-method convert-clipboard-content
+(define-presentation-method convert-selection-content
     (obj (type markup-text) (output-type (eql :string)) check-only)
   (markup-text/text obj))
 @end verbatim

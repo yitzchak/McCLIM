@@ -24,6 +24,8 @@
 
 (in-package :climi)
 
+;;; XXX: is this updated?
+
 ;;;; Interaction implemented:
 
 ;;; Shift-Mouse-L down: clear active selection and set the first point
@@ -163,7 +165,8 @@
   (declare (ignore time))
   (repaint-markings pane (slot-value pane 'markings)
                     (setf (slot-value pane 'markings) nil))
-  (clear-selection (port pane) pane))
+  (clear-selection pane :primary nil)
+  (clear-selection pane :local-selection nil))
  
 
 (defmethod eos/shift-click ((pane extended-output-stream) event)
@@ -195,7 +198,8 @@
             dragging-p nil)
       (let ((content (fetch-selection pane)))
         (when (plusp (length content))
-          (copy-to-selection (port pane) pane content))))))
+          (publish-selection pane :primary content)
+          (publish-selection pane :local-selection content))))))
 
 (defun repaint-markings (pane old-markings new-markings)
   (let ((old-region (reduce #'region-union (mapcar #'(lambda (x) (marking-region pane x)) old-markings)

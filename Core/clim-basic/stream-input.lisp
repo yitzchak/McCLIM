@@ -227,7 +227,7 @@ keys read."))
                           (and (typep sheet 'interactor-pane)
                                (or (typep event 'key-press-event)
                                    (typep event 'pointer-button-press-event)
-                                   (typep event 'clipboard-send-event)))))))
+                                   (typep event 'selection-request-response-event)))))))
         (progn
           (event-queue-read buffer)     ;eat it
           (handle-event (event-sheet event) event)
@@ -245,7 +245,7 @@ keys read."))
 (defmethod stream-process-gesture ((stream standard-extended-input-stream) gesture type)
   (declare (ignore type))
   (typecase gesture
-    ((or character symbol pointer-button-event clipboard-send-event)
+    ((or character symbol pointer-button-event selection-request-response-event)
      (values gesture (type-of gesture)))
     (key-press-event
      (let ((modifiers (event-modifier-state gesture))

@@ -148,7 +148,7 @@ of type `empty-kill-ring' is signalled."))
   (push-start chain vector)
   (when (every #'characterp vector)
     (let ((pane (drei:editor-pane (drei:drei-instance))))
-      (clim-extensions:copy-to-clipboard (clim:port pane) pane (coerce vector 'string)))))
+      (clime:publish-selection pane :clipboard (coerce vector 'string)))))
 
 (defmethod kill-ring-standard-push ((kr kill-ring) vector)
   (check-type vector vector)

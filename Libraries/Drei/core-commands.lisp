@@ -504,7 +504,7 @@ The default is 5. A number less than 5 will be replaced by 5."
   "Insert the contents of the clipboard at point."
   (let* ((drei (drei:drei-instance))
          (pane (drei:editor-pane drei)))
-    (clim-extensions:request-clipboard-content (clim:port pane) pane :string)))
+    (clime:request-selection pane :clipboard :string)))
 
 (esa:set-key 'com-yank-from-clipboard
              'drei:editing-table

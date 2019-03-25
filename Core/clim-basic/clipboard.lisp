@@ -1,152 +1,96 @@
 (in-package #:climi)
 
-;;;  This file contains the definition of the clipboard protocol.
+;;; How selection boxes work
 ;;;
-;;;  This implementation supports two separate ways to transfer data
-;;;  between applications.
+;;; User may use any amount of selection boxes designated by a symbol. Some boxes
+;;; may have a special treatment – for instance on x11 :clipboard and :primary are
+;;; integrated with the display server boxes. Backends are allowed to
+;;; EQL-specialize other boxes too. If a box is not specialized then it is
+;;; available only for frames which are in the same lisp image.
 ;;;
-;;;    Selection:
+;;; Some boxes may have some default treatment:
 ;;;
-;;;      The currently selected data (for example using shift-drag in
-;;;      a stream pane). X11 allows an application to request the
-;;;      content of the selection, usually by pressing middle-click to
-;;;      paste. Other windowing systems might not allow one
-;;;      application to request the content of the selection from
-;;;      another application.
+;;;   :LOCAL-SELECTION
 ;;;
-;;;    Clipboard:
+;;;     Active selection on clim-stream made with a gesture.
 ;;;
-;;;      This is the standard clipboard which is used to copy data
-;;;      between applications. Most GNOME applications use Control-V
-;;;      to paste the content of the clipboard into the current
-;;;      application.
+;;;   :PRIMARY
 ;;;
-;;;  To update the selection or clipboard, the functions
-;;;  COPY-TO-SELECTION and COPY-TO-CLIPBOARD are used. These functions
-;;;  take two required arguments: The sheet that should act as the
-;;;  owner of the selection or clipboard, and the object itself.
+;;;     Current selection on a display server.  Gesture on clim-stream will change
+;;;     the selection, but another window may overwrite it. Content of this box is
+;;;     pasted when appropriate gesture is made.
 ;;;
-;;;  To request the content of the selection or clipboard, the
-;;;  functions REQUEST-SELECTION-CONTENT and REQUEST-CLIPBOARD-CONTENT
-;;;  are used. The arguments are the sheet to which the result should
-;;;  be delivered, and a keyword or list of keywords specifying the
-;;;  accepted data types.
+;;;   :CLIPBOARD
 ;;;
-;;;  Currently supported data types when requesting selection or
-;;;  clipboard content are: :STRING, :HTML, :IMAGE.
-
+;;;     Clipboard holds a result of the last kill operation which may be used in a
+;;;     yank operation. See CLIME:CONVERT-CLIPBOARD-CONTENT for interaction with
+;;;     other applications.
 ;;;
-;;;  Functions dealing with copying to the clipboard.
+;;; End users:
 ;;;
-
-(deftype representation-type-name () '(member :string :html :image))
-
-(defgeneric copy-to-selection (port sheet object &key presentation-type)
-  (:documentation "Copy OBJECT to the selection.
-
-Please refer to the documentation for COPY-TO-CLIPBOARD for details.")
-  (:method ((port clim:port) (sheet clim:sheet) object &key presentation-type)
-    (declare (ignore presentation-type))
-    nil))
-
-(defgeneric copy-to-clipboard (port sheet object &key presentation-type)
-  (:documentation "Copy OBJECT to the clipboard.
-
-When this function is called, the backend is responsible for placing
-OBJECT on the selection or clipboard. Afterwards, other applications
-should be able to paste this object.
-
-The object has a presentation type, indicated by the parameter
-PRESENTATION-TYPE. It is the responsibility of the backend to use the
-function CONVERT-CLIPBOARD-CONTENT to retrieve the underlying data
-from the object when needed. Note that the conversion operation may be
-expensive (in particular for images) so it is recommended that the a
-full conversion only be performed when a request to copy the content
-is actually performed. Use the :CHECK-ONLY argument to check whether a
-conversion is supported.
-
-PORT is the port that the sheet belongs to. It should be the primary
-argument that individual sheets specialise on.
-
-SHEET is the owner of the selection or clipboard.
-
-OBJECT is the object that should be copied.
-
-PRESENTATION-TYPE is the CLIM presentation type for OBJECT. It should
-be passed to CONVERT-CLIPBOARD-CONTENT when the actual clipboard data
-is retrieved.")
-  (:method ((port clim:port) (sheet clim:sheet) object &key presentation-type)
-    (declare (ignore presentation-type))
-    nil))
-
-(defgeneric clear-selection (port sheet)
-  (:documentation "Clear the content of the selection.
-
-Please refer to the documentation for CLEAR-CLIPBOARD for details.")
-  (:method ((port clim:port) (sheet clim:sheet))
-    nil))
-
-(defgeneric clear-clipboard (port sheet)
-  (:documentation "Clear the content of the clipboard.
-
-When this function is called, the backend should ensure that the
-content of the selection or the clipboard is no longer available for
-pasting.
-
-PORT is the port that the sheet belongs to. It should be the primary
-argument that individual sheets specialise on.
-
-SHEET is the owner of the selection or clipboard.
-
-Clear the clipboard if CLIPBOARD-P is true, otherwise the selection.")
-  (:method ((port clim:port) (sheet clim:sheet))
-    nil))
-
-(defgeneric local-selection-content (port)
-  (:documentation "Returns the content of the selection in this Lisp image.
-If the global selection is currently held, the value returned is the
-same as what would be sent in response to a REQUEST-SELECTION-CONTENT
-call.
-
-If content is available, this function should return two values: The
-content of the selection, and the presentation-type of the object.
-Otherwise (VALUES NIL NIL) should be returned.
-
-This function is used by the copy selection to clipboard operation.
-This is in order to present the same beahviour as most non-CLIM
-applications exhibit: They are able to perform the copy
-operation (usually invoked by control-c) even when not owning the
-system-wide selection.
-
-The simplest implementation of this function would simply return the
-content of the selection, or (VALUES NIL NIL) if it is not held.")
-  (:method ((port clim:port))
-    nil))
-
+;;;   Some predefined gestures are definedto make the end user life easier. For
+;;;   text-selection:
 ;;;
-;;;  The following functions implement the standard API to request
-;;;  content from the clipboard.
+;;;     Shift-Mouse-L: select text by dragging cursor (sets the box :primary)
+;;;     Shift-Mouse-R: move nearest point of existing selection
+;;;     Shift-Mouse-M: paste content of the box :primary
 ;;;
+;;;   On text-editing fields kill command puts content in the box :clipboard and
+;;;   yank command takes the content from said box and puts it in the buffer.
 
-(defgeneric request-selection-content (port sheet type)
-  (:documentation "Request the content of the selection.
+;;; Instances of class SELECTION-OBJECT are used for both requesting and
+;;; publishing the selection. Methods specialized on port are specialized on this
+;;; class of object and it is a responsibility of methods specialized on sheets to
+;;; allocate these objects for functions CLEAR-SELECTION, PUBLISH-SELECTION and
+;;; REQUEST-SELECTION.
+;;;
+;;; SELECTION-OBJECT-CONTENT - content to publish/clear or a selection for rquest
+;;; SELECTION-OBJECT-TYPES - presentation types associated with the content
+;;; SELECTION-OBJECT-OWNER - sheet associated with the content
+(defclass selection-object ()
+  ((content :initarg :content :reader selection-object-content)
+   (types   :initarg :types   :reader selection-object-types)
+   (owner   :initarg :owner   :reader selection-object-owner)))
 
-Please refer to the documentation for REQUEST-CLIPBOARD-CONTENT for
-details.")
-  (:method ((port clim:port) (sheet clim:sheet) type)
-    nil))
+;;; Clears SELECTION (only when PUBLISHER is its owner). When called on port
+;;; selection is cleared unconditionally.
+(defgeneric clear-selection (publisher selection object)
+  (:documentation "Wipe the selection box.")
+  (:method ((sheet basic-sheet) selection object)
+    (declare (ignore object))
+    (alexandria:when-let*
+        ((port (port sheet))
+         (object (stored-object port selection)))
+      (when (eql (selection-object-owner object) sheet)
+        (clear-selection port selection object)))))
 
-(defgeneric request-clipboard-content (port sheet type)
-  (:documentation "Request the content of the clipboard.
+;;; Stores OBJECT in a box SELECTION. PRESENTATION-TYPE defaults to
+;;; (PRESENTATION-TYPE-OF OBJECT). Object may be published under many presentation
+;;; types in which case argument should hold a list with them.
+(defgeneric publish-selection (publisher selection object &optional presentation-types)
+  (:documentation "Publish the object in the selection box.")
+  (:method ((sheet basic-sheet) selection object
+            &optional (presentation-types (list (presentation-type-of object))))
+    (publish-selection (port sheet)
+                       selection
+                       (make-instance 'selection-object
+                                      :content object
+                                      :types (alexandria:ensure-list presentation-types)
+                                      :owner sheet))))
 
-After calling this function, if the clipboard is active and can be
-presented as the requested type, an event of type CLIPBOARD-SEND-EVENT
-will be delivered to SHEET. This event will contain the requested data
-in one of the requested formats.
-
-TYPE is a list of keywords (or a single keyword, in which case it is
-interpreted as a list of a single element) that indicates the type of
-data that can be accepted. If the clipboard content can be represented
-in more than one format, the first matching type will be used.")
-  (:method ((port clim:port) (sheet clim:sheet) type)
-    nil))
+;; Function returns immedietely. If SELECTION matching one of ACCEPTABLE-TYPES is
+;; available CLIME:SELECTION-REQUEST-RESULT-EVENT is queued for REQUESTER sheet.
+(defgeneric request-selection (requester selection request)
+  (:documentation "Request an object from the selection box.")
+  (:method ((sheet basic-sheet) selection acceptable-types)
+    (multiple-value-bind (content type present-p)
+        (request-selection (port sheet)
+                           selection
+                           (make-instance 'selection-object
+                                          :content selection
+                                          :types (alexandria:ensure-list acceptable-types)
+                                          :owner sheet))
+      (when present-p
+        (queue-event sheet (make-instance 'clime:selection-request-response-event
+                                          :type type :content content :sheet sheet)))
+      (values content type present-p))))

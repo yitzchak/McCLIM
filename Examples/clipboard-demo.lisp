@@ -12,11 +12,11 @@
   (clim:with-drawing-options (stream :ink clim:+blue+)
     (format stream "~a" (markup-text/text obj))))
 
-(clim:define-presentation-method clim-extensions:convert-clipboard-content
+(clim:define-presentation-method clime:convert-selection-content
     (obj (type markup-text) (output-type (eql :string)) check-only)
   (markup-text/text obj))
 
-(clim:define-presentation-method clim-extensions:convert-clipboard-content
+(clim:define-presentation-method clime:convert-selection-content
     (obj (type markup-text) (output-type (eql :html)) check-only)
   (format nil "Highlighted content: <b>~a</b>" (markup-text/text obj)))
 
@@ -54,12 +54,13 @@
     (obj)
   (list (make-instance 'climi::clipboard-object :content obj :type 'markup-text)))
 
-(defmethod clim:handle-event :around ((pane paste-output-stream-pane) (event clim-extensions:clipboard-send-event))
+(defmethod clim:handle-event :around ((pane paste-output-stream-pane)
+                                      (event clime:selection-request-response-event))
   (let ((frame (clim:pane-frame pane)))
     (setf (clipboard-demo/pasted-list frame)
           (append (clipboard-demo/pasted-list frame)
-                  (list (list (clim-extensions:clipboard-event-content event)
-                              (clim-extensions:clipboard-event-type event)))))
+                  (list (list (clime:selection-event-content event)
+                              (clime:selection-event-type event)))))
     (clim:redisplay-frame-pane frame pane)))
 
 (defun display-clipboard-demo (frame stream)
@@ -92,17 +93,17 @@
 (define-clipboard-demo-command (com-paste-text :name "Paste Text")
     ()
   (let ((pane (clim:find-pane-named clim:*application-frame* 'paste-output)))
-    (clim-extensions:request-clipboard-content (clim:port pane) pane :string)))
+    (clime:request-selection pane :clipboard :string)))
 
 (define-clipboard-demo-command (com-paste-html :name "Paste HTML")
     ()
   (let ((pane (clim:find-pane-named clim:*application-frame* 'paste-output)))
-    (clim-extensions:request-clipboard-content (clim:port pane) pane :html)))
+    (clime:request-selection pane :clipboard :html)))
 
 (define-clipboard-demo-command (com-paste-image :name "Paste Image")
     ()
   (let ((pane (clim:find-pane-named clim:*application-frame* 'paste-output)))
-    (clim-extensions:request-clipboard-content (clim:port pane) pane :image)))
+    (clime:request-selection pane :clipboard :image)))
 
 (define-clipboard-demo-command (com-clear-paste-pane :name "Clear Paste Pane")
     ()
@@ -114,17 +115,26 @@
    (type    :initarg :type
             :reader clipboard-object/type)))
 
+
+(defun supported-clipboard-types (obj type)
+  (loop
+     for output-type in '(:string :html :image)
+     when (clime:convert-selection-content obj output-type :type type :check-only t)
+     collect type))
+
 (clim:define-presentation-translator presentation-clipboard-object
-    (t clipboard-object clim:global-command-table :tester ((obj presentation)
-                                                           (climi::supported-clipboard-types obj (clim:presentation-type presentation))))
+    (t clipboard-object clim:global-command-table
+       :tester ((obj presentation)
+                (supported-clipboard-types obj (clim:presentation-type presentation))))
     (obj presentation)
   (make-instance 'clipboard-object :content obj :type (clim:presentation-type presentation)))
 
 (clim:define-command (com-copy-to-clipboard :command-table clim:global-command-table :name "Copy Presentation to Clipboard")
     ((obj clipboard-object :prompt "Object"))
   (let ((pane (clim:frame-top-level-sheet clim:*application-frame*)))
-    (clime:copy-to-clipboard (clim:port pane) pane (clipboard-object/content obj)
-                             :presentation-type (clipboard-object/type obj))))
+    (clime:publish-selection pane :clipboard
+                             (clipboard-object/content obj)
+                             (clipboard-object/type obj))))
 
 (clim:define-presentation-translator string-to-clipboard (string clipboard-object clim:global-command-table)
     (object)
@@ -133,9 +143,9 @@
 (clim:define-command (com-copy-text-to-clipboard :command-table clim:global-command-table :name "Copy Text to Clipboard")
     ()
   (multiple-value-bind (object type)
-      (clim-extensions:local-selection-content (clim:port *standard-output*))
+      (clime:request-selection *standard-output* :local-selection 'string)
     (if object
-        (clim-extensions:copy-to-clipboard (clim:port *standard-output*) *standard-output* object :presentation-type type)
+        (clime:publish-selection *standard-output* :clipboard object type)
         (invoke-restart 'abort))))
 
 (clim:make-command-table 'clipboard-demo-menubar-table

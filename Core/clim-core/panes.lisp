@@ -2729,7 +2729,7 @@ SCROLLER-PANE appear on the ergonomic left hand side, or leave set to
   ;; event gets eaten here anyway. -- lokedhs 2019-02-16
   (when (and (eql (event-modifier-state button-press-event) +shift-key+)
              (eql (pointer-event-button button-press-event) +pointer-middle-button+))
-    (clim-extensions:request-selection-content (clim:port stream) stream :string)))
+    (clime:request-selection stream :primary :string)))
 
 ;;; APPLICATION PANES
 
