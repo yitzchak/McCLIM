@@ -11,10 +11,10 @@
    (outstanding-request :initform nil :accessor clipboard-outstanding-request)))
 
 (macrolet ((thunk (selection)
-             `(defmethod climb:publish-selection :before ((port clx-clipboard-port-mixin)
-                                                          (selection (eql ,selection))
-                                                          (object climb:selection-object)
-                                                          &optional presentation-type)
+             `(defmethod climb:publish-selection ((port clx-clipboard-port-mixin)
+                                                  (selection (eql ,selection))
+                                                  (object climb:selection-object)
+                                                  &optional presentation-type)
                 (declare (ignore port presentation-type))
                 (let ((window (sheet-direct-xmirror (climb:selection-object-owner object))))
                   ;; We're not actually supposed to call set-selection-owner without
@@ -32,17 +32,19 @@
                   ;; in practice, and it significantly simplifies the
                   ;; implementation.
                   (xlib:set-selection-owner (xlib:window-display window) selection window nil)
-                  (unless (eq (xlib:selection-owner (xlib:window-display window) selection) window)
-                    (warn "Couldn't set X11 selection ~s owner to ~s." selection window))))))
+                  (if (eq (xlib:selection-owner (xlib:window-display window) selection) window)
+                      (call-next-method)
+                      (warn "Couldn't set X11 selection ~s owner to ~s." selection window))))))
   (thunk :primary)
   (thunk :clipboard))
 
 (macrolet ((thunk (selection)
-             `(defmethod climb:clear-selection :before ((port clx-clipboard-port-mixin)
-                                                        (selection (eql ,selection))
-                                                        (object selection-object))
+             `(defmethod climb:clear-selection ((port clx-clipboard-port-mixin)
+                                                (selection (eql ,selection))
+                                                (object selection-object))
                 (let ((window (sheet-direct-xmirror (climb:selection-object-owner object))))
-                  (xlib:set-selection-owner (xlib:window-display window) selection nil nil)))))
+                  (xlib:set-selection-owner (xlib:window-display window) selection nil nil)
+                  (call-next-method)))))
   (thunk :primary)
   (thunk :clipboard))
 
