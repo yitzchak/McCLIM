@@ -89,7 +89,7 @@
   (alexandria:when-let ((stored-object (climi::stored-object port selection)))
     (when (eq (sheet-direct-xmirror (selection-object-owner stored-object)) window)
       (let ((content (selection-object-content stored-object))
-            (presentation-type (car (climb:selection-object-types stored-object))))
+            (presentation-types (climb:selection-object-types stored-object)))
         (flet ((send-reply-event (&optional omit-prop)
                  (xlib:send-event requestor :selection-notify nil
                                   :window requestor
@@ -102,25 +102,36 @@
                  (let ((display (clx-port-display port))
                        (types (loop
                                  for output-type in '(:string :html)
-                                 when (clime:convert-selection-content content output-type
-                                                                       :type presentation-type
-                                                                       :check-only t)
-                                 append (representation-type-to-native output-type))))
+                                 append
+                                   (loop
+                                      for presentation-type in presentation-types
+                                      when (clime:convert-selection-content content output-type
+                                                                            :type presentation-type
+                                                                            :check-only t)
+                                      append (representation-type-to-native output-type)))))
                    (mapcar (lambda (v)
                              (xlib:intern-atom display v))
-                           (remove-duplicates (cons :targets types))))))
+                           (remove-duplicates (cons :targets types)))))
+               (find-presentation-type (output-type)
+                 (find-if (lambda (presentation-type)
+                            (clime:convert-selection-content content output-type
+                                                             :type presentation-type
+                                                             :check-only t))
+                          presentation-types)))
           (case target
             ((:targets)
              (let ((targets (make-targets-response)))
                (xlib:change-property requestor property targets :atom 32)
                (send-reply-event)))
             ((:utf8_string :text :string :|text/plain;charset=utf-8| :|text/plain|)
-             (let ((content-as-string (clime:convert-selection-content content :string :type presentation-type)))
+             (let* ((presentation-type (find-presentation-type :string))
+                    (content-as-string (clime:convert-selection-content content :string :type presentation-type)))
                (xlib:change-property requestor property (babel:string-to-octets content-as-string :encoding :utf-8) :string 8)
                (send-reply-event)))
             ((:|text/html|)
-             (let ((s (format nil "<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">~a"
-                              (clime:convert-selection-content content :html :type presentation-type))))
+             (let* ((presentation-type (find-presentation-type :html))
+                    (s (format nil "<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">~a"
+                               (clime:convert-selection-content content :html :type presentation-type))))
                (xlib:change-property requestor property
                                      (babel:string-to-octets s :encoding :utf-8)
                                      :string 8))
