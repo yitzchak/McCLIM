@@ -702,7 +702,7 @@ real numbers, and default to 0."
 (defun atan* (x y)
   ;; atan like we need it.
   ;; For us, phi=0 along the x axis and angles are always between 0 and 2pi.
-  (let ((r (atan y x)))
+  (let ((r (atan (float y pi) x)))
     (if (< r 0) (+ r (* 2 pi)) r)))
 
 (defun correct-angle (a phi)
