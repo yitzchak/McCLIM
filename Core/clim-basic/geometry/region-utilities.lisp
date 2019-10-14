@@ -47,6 +47,16 @@
        (coordinate-between y1 y y2)
        (line-contains-point-p x1 y1 x2 y2 x y)))
 
+(declaim (inline segment-contains-segment-p))
+(defun segment-contains-segment-p (ax ay bx by
+                                   cx cy dx dy)
+  (and (line-contains-point-p ax ay bx by cx cy)
+       (line-contains-point-p ax ay bx by dx dy)
+       (let ((c-fktn (position->line-fktn ax ay bx by cx cy))
+             (d-fktn (position->line-fktn ax ay bx by dx dy)))
+         (/= (clamp c-fktn 0d0 1d0)
+             (clamp d-fktn 0d0 1d0)))))
+
 (declaim (inline segment-difference))
 (defun segment-difference (ax ay bx by
                            cx cy dx dy)
@@ -613,6 +623,33 @@
   (multiple-value-bind (xc yc) (ellipse-center-point* ellipse)
     ;; remember, that y-axis is reverted
     (coordinate (atan* (- x xc) (- (- y yc))))))
+
+;;; This function retuns a bounding rectangle of the ellipse centered
+;;; at (0 0) with radii h and v rotated by the angle phi. It doesn't
+;;; take into account start/end angles.
+(defun ellipse-bounding-rectangle (el)
+  (multiple-value-bind (cx cy h v phi) (ellipse-simplified-representation el)
+    (let* ((sin (sin phi))
+           (cos (cos phi))
+           (ax (+ (expt (* v sin) 2)
+                  (expt (* h cos) 2)))
+           (ay (+ (expt (* v cos) 2)
+                  (expt (* h sin) 2)))
+           (numerator-x (- (* ax h h v v)))
+           (numerator-y (- (* ay h h v v)))
+           (denominator-common (expt (* cos
+                                        sin
+                                        (- (* v v) (* h h)))
+                                     2))
+           (x (sqrt (/ numerator-x
+                       (- denominator-common
+                          (* ax (+ (expt (* v cos) 2)
+                                   (expt (* h sin) 2)))))))
+           (y (sqrt (/ numerator-y
+                       (- denominator-common
+                          (* ay (+ (expt (* v sin) 2)
+                                   (expt (* h cos) 2))))))))
+      (values (- cx x) (- cy y) (+ cx x) (+ cy y)))))
 
 ;;; -- Ellipse simplified representation ---------------------------------------
 

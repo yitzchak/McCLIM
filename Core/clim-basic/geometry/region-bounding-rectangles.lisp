@@ -20,32 +20,6 @@
       (bounding-rectangle self)
     (values x1 y1 x2 y2)))
 
-(defun ellipse-bounding-rectangle (el)
-  ;; returns bounding rectangle of ellipse centered at (0, 0) with radii h and v
-  ;; rotated by the angle phi.
-  (multiple-value-bind (cx cy h v phi) (ellipse-simplified-representation el)
-    (let* ((sin (sin phi))
-           (cos (cos phi))
-           (ax (+ (expt (* v sin) 2)
-                  (expt (* h cos) 2)))
-           (ay (+ (expt (* v cos) 2)
-                  (expt (* h sin) 2)))
-           (numerator-x (- (* ax h h v v)))
-           (numerator-y (- (* ay h h v v)))
-           (denominator-common (expt (* cos
-                                        sin
-                                        (- (* v v) (* h h)))
-                                     2))
-           (x (sqrt (/ numerator-x
-                       (- denominator-common
-                          (* ax (+ (expt (* v cos) 2)
-                                   (expt (* h sin) 2)))))))
-           (y (sqrt (/ numerator-y
-                       (- denominator-common
-                          (* ay (+ (expt (* v sin) 2)
-                                   (expt (* h cos) 2))))))))
-      (values (- cx x) (- cy y) (+ cx x) (+ cy y)))))
-
 (defmethod bounding-rectangle* ((region elliptical-thing))
   (with-slots (tr start-angle end-angle) region
     (multiple-value-bind (cx cy) (ellipse-center-point* region)

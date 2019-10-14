@@ -118,32 +118,145 @@
 ;;        Returns nil if region-intersection of the two regions region1 and
 ;;        region2 would be +nowhere+; otherwise, it returns t.
 ;;
-;;        aka region1 und region2 sind nicht disjunkt  aka AB /= 0
+;;        aka region1 and region2 are not disjoint aka AB /= 0
 ;;
 
-;; "generic" version
+;;; general rules
+
+;;; fallback method
 (defmethod region-intersects-region-p ((a bounding-rectangle) (b bounding-rectangle))
   (not (region-equal +nowhere+ (region-intersection a b))))
 
 (defmethod region-intersects-region-p :around ((a bounding-rectangle) (b bounding-rectangle))
   (multiple-value-bind (x1 y1 x2 y2) (bounding-rectangle* a)
     (multiple-value-bind (u1 v1 u2 v2) (bounding-rectangle* b)
-      (cond ((and (<= u1 x2) (<= x1 u2)
-                  (<= v1 y2) (<= y1 v2))
-             (call-next-method))
-            (t
-             nil)))))
+      (and (<= u1 x2) (<= x1 u2)
+           (<= v1 y2) (<= y1 v2)
+           (call-next-method)))))
 
-(defmethod region-intersects-region-p ((a standard-rectangle) (b standard-rectangle))
+(defmethod region-intersects-region-p ((a path) (b area))
+  (region-intersects-region-p b a))
+
+;;; points
+(defmethod region-intersects-region-p ((a point) (b bounding-rectangle))
+  (multiple-value-bind (x y) (point-position a)
+    (region-contains-position-p a x y)))
+
+(defmethod region-intersects-region-p ((a bounding-rectangle) (b point))
+  (region-intersects-region-p b a))
+
+;;; paths vs paths
+(defmethod region-intersects-region-p ((a polyline) (b polyline))
+  ;; If an intersection is a point it doesn't count as such.
+  (map-over-polygon-segments
+   (lambda (ax ay bx by)
+     (map-over-polygon-segments
+      (lambda (cx cy dx dy)
+        (unless (eql t (segment-difference ax ay bx by cx cy dx dy))
+          (return-from region-intersects-region-p t)))
+      b))
+   a)
+  nil)
+
+(defmethod region-intersects-region-p ((a polyline) (b elliptical-arc))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-intersects-region-p ((a elliptical-arc) (b polyline))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-intersects-region-p ((a elliptical-arc) (b elliptical-arc))
+  (multiple-value-bind (cx1 cy1 rh1 rv1 phi1)
+      (ellipse-simplified-representation a)
+    (multiple-value-bind (cx2 cy2 rh2 rv2 phi2)
+        (ellipse-simplified-representation b)
+      (and (coordinate= cx1 cx2)      ; centers match
+           (coordinate= cy1 cy2)
+           (coordinate= rh1 rh2)      ; radii match
+           (coordinate= rv1 rv2)
+           (= phi1 phi2)              ; rotation match
+           (let ((a-alpha (or (ellipse-start-angle a) 0))
+                 (b-alpha (or (ellipse-start-angle b) 0))
+                 (a-omega (or (ellipse-end-angle a) (* 2 pi)))
+                 (b-omega (or (ellipse-end-angle b) (* 2 pi))))
+             (or (= a-alpha b-alpha)
+                 (and (< b-alpha a-alpha)
+                      (or (< b-omega b-alpha)
+                          (> b-omega a-alpha)))
+                 (and (< a-alpha b-alpha)
+                      (or (< a-omega a-alpha)
+                          (> a-omega b-alpha)))))))))
+
+;;; areas vs paths
+(defmethod region-intersects-region-p ((a polygon) (b polyline))
+  (let ((points (polygon-points a))
+        last-overcut)
+    (map-over-polygon-segments
+     (lambda (x1 y1 x2 y2)
+       (setf last-overcut nil)
+       (map-over-overcuts-line/polygon
+        (lambda (overcut)
+          (clampf overcut 0d0 1d0)
+          (when (null last-overcut)
+            (setf last-overcut overcut))
+          (when (/= last-overcut overcut)
+            (return-from region-intersects-region-p t)))
+        x1 y1 x2 y2 points))
+     b))
+  nil)
+
+(defmethod region-intersects-region-p ((a ellipse) (b polyline))
+  (let ((alpha (ellipse-start-angle a))
+        (omega (ellipse-end-angle a)))
+    (map-over-polygon-segments
+     (lambda (bx1 by1 bx2 by2)
+       (multiple-value-bind (ax1 ay1 ax2 ay2)
+           (cond ((= bx1 bx2) (intersection-vline/ellipse a bx1))
+                 ((= by1 by2) (intersection-hline/ellipse a by1))
+                 (t (intersection-line/ellipse a bx1 by1 bx2 by2)))
+         (when (and (every #'realp (list ax1 ay1 ax2 ay2))
+                    (segment-contains-segment-p bx1 by1 bx2 by2
+                                                ax1 by1 bx2 by2))
+           ;; Following block checks if the intersection segment at
+           ;; least partially belongs to the slice denoted by start
+           ;; and end angles.
+           (multiple-value-bind (cx cy) (ellipse-center-point* a)
+             (when (or (and (coordinate/= ax1 cx)
+                            (coordinate/= ay1 cy)
+                            (angle-contains-point-p alpha omega (- ax1 cx) (- ay1 cy)))
+                       (and (coordinate/= ax2 cx)
+                            (coordinate/= ay2 cy)
+                            (angle-contains-point-p alpha omega (- ax2 cx) (- ay2 cy))))
+               (return-from region-intersects-region-p t))))))
+     b))
+  nil)
+
+;;; FIXME the following cases are currently handled by a fallback method.
+
+;; (defmethod region-intersects-region-p ((a rectangle) (b elliptical-arc)))
+;; (defmethod region-intersects-region-p ((a polygon) (b elliptical-arc)))
+;; (defmethod region-intersects-region-p ((a ellipse) (b elliptical-arc)))
+
+;;; areas vs areas
+(defmethod region-intersects-region-p ((a rectangle) (b rectangle))
   (declare (ignorable a b))
-  ;; for rectangles, the bounding rectangle test is correct, so if we
-  ;; wind up here, we just can return T.
-  t
-  ;;(multiple-value-bind (x1 y1 x2 y2) (rectangle-edges* a)
-  ;;  (multiple-value-bind (u1 v1 u2 v2) (rectangle-edges* b)
-  ;;    (and (<= u1 x2) (<= x1 u2)
-  ;;         (<= v1 y2) (<= y1 v2))))
-  )
+  ;; For rectangles an :around method specialized on bounding
+  ;; rectangles test is sufficient, so if we wind up here, we may
+  ;; simply return T.
+  #+ (or)
+  (multiple-value-bind (x1 y1 x2 y2) (rectangle-edges* a)
+    (multiple-value-bind (u1 v1 u2 v2) (rectangle-edges* b)
+      (and (<= u1 x2) (<= x1 u2)
+           (<= v1 y2) (<= y1 v2))))
+  t)
+
+;;; FIXME the following cases are currently handled by a fallback method.
+
+;; (defmethod region-intersects-region-p ((a polygon) (b polygon)))
+;; (defmethod region-intersects-region-p ((a polygon) (b ellipse)))
+;; (defmethod region-intersects-region-p ((a ellipse) (b polygon)))
+;; (defmethod region-intersects-region-p ((a ellipse) (b ellipse)))
 
 
 ;;   REGION-CONTAINS-REGION-P region1 region2
