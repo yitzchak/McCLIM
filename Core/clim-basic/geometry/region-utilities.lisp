@@ -651,6 +651,28 @@
                                    (expt (* h cos) 2))))))))
       (values (- cx x) (- cy y) (+ cx x) (+ cy y)))))
 
+;;; This function returns a polygon which contains all ellipse points
+;;; and no points between start-angle and end-angle.
+(defun ellipse-bounding-polygon (ellipse)
+  (let ((alpha (ellipse-start-angle ellipse))
+        (omega (ellipse-end-angle ellipse)))
+    (when (null alpha)
+      (return-from ellipse-bounding-polygon
+        (transform-region (polar->screen ellipse)
+                          (make-rectangle* -1 -1 1 1))))
+    (let ((x0 (cos alpha))
+          (y0 (sin alpha))
+          (x1 (cos omega))
+          (y1 (sin omega))
+          (alpha-quadrant (cond ((<= alpha (* 1/4 2 pi)) 1)
+                                ((<= alpha (* 2/4 2 pi)) 2)
+                                ((<= alpha (* 3/4 2 pi)) 3)
+                                (t                       4)))
+          (omega-quadrant (cond ((<= omega (* 1/4 2 pi)) 1)
+                                ((<= omega (* 2/4 2 pi)) 2)
+                                ((<= omega (* 3/4 2 pi)) 3)
+                                (t                       4)))))))
+
 ;;; -- Ellipse simplified representation ---------------------------------------
 
 (defun ellipse-coefficients (ell)

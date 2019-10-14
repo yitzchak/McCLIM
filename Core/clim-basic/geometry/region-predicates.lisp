@@ -265,28 +265,204 @@
 ;;        region B; otherwise, it returns nil.
 ;;
 ;;        aka region2 ist teilmenge von region1  aka B\A = 0
-;;
 
-;;; "generic" version
+;;; general rules
+
+;;; fallback method
 (defmethod region-contains-region-p ((a bounding-rectangle) (b bounding-rectangle))
   (or (eq a b)
       (region-equal +nowhere+ (region-difference b a))))
 
-(defmethod region-contains-region-p ((a standard-ellipse) (b standard-ellipse))
+(defmethod region-contains-region-p :around ((a bounding-rectangle) (b bounding-rectangle))
+  (or (eq a b)
+      (call-next-method)))
+
+(defmethod region-contains-region-p ((a bounding-rectangle) (b point))
+  (multiple-value-bind (x y) (point-position b)
+    (region-contains-position-p a x y)))
+
+;;; dimensionality rule
+(defmethod region-contains-region-p ((a point) (b path))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-contains-region-p ((a point) (b area))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-contains-region-p ((a path) (b area))
+  (declare (ignore a b))
+  nil)
+
+;;; "normal" regions
+
+;;; paths vs paths
+(defmethod region-contains-region-p ((a line) (b line))
+  (nest (multiple-value-bind (ax1 ay1) (line-start-point* a))
+        (multiple-value-bind (ax2 ay2) (line-end-point* a))
+        (multiple-value-bind (bx1 by1) (line-start-point* b))
+        (multiple-value-bind (bx2 by2) (line-end-point* b)
+          (and (segment-contains-point-p ax1 ay1 ax2 ay2 bx1 by1)
+               (segment-contains-point-p ax1 ay1 ax2 ay2 bx2 by2)))))
+
+(defmethod region-contains-region-p ((a line) (b polyline))
+  (nest (multiple-value-bind (ax ay) (line-start-point* a))
+        (multiple-value-bind (bx by) (line-end-point* a))
+        (map-over-polygon-segments
+         (lambda (cx cy dx dy)
+           (unless (and (segment-contains-point-p ax ay bx by cx cy)
+                        (segment-contains-point-p ax ay bx by dx dy))
+             (return-from region-contains-region-p nil)))
+         b))
+  t)
+
+(defmethod region-contains-region-p ((a polyline) (b line))
+  (multiple-value-bind (x1 y1) (line-start-point* b)
+    (multiple-value-bind (x2 y2) (line-end-point* b)
+      (let ((lines (list (list x1 y1 x2 y2))))
+        (map-over-polygon-segments
+         (lambda (cx cy dx dy)
+           ;; quick one-sided test
+           (when (and (segment-contains-point-p cx cy dx dy x1 y1)
+                      (segment-contains-point-p cx cy dx dy x2 y2))
+             (return-from region-contains-region-p t))
+           (loop with new-lines = nil
+                 for line = (pop lines)
+                 while line
+                 do (destructuring-bind (ax ay bx by) line
+                      (let ((diff (segment-difference ax ay bx by
+                                                      cx cy dx dy)))
+                        (typecase diff
+                          (null)
+                          (cons      (setf new-lines (nconc diff new-lines)))
+                          (otherwise (setf new-lines (list* line new-lines))))))
+                 finally
+                    (if (null new-lines)
+                        (return-from region-contains-region-p t)
+                        (setf lines new-lines))))
+         a))))
+  nil)
+
+(defmethod region-contains-region-p ((a polyline) (b polyline))
+  (let ((lines nil))
+    (collect (acc)
+      (map-over-polygon-segments
+       (lambda (ax ay bx by)
+         (acc (list ax ay bx by)))
+       b)
+      (setf lines (acc)))
+    (map-over-polygon-segments
+     (lambda (cx cy dx dy)
+       (loop with new-lines = nil
+             for line = (pop lines)
+             while line
+             do (destructuring-bind (ax ay bx by) line
+                  (let ((diff (segment-difference ax ay bx by
+                                                  cx cy dx dy)))
+                    (typecase diff
+                      (null)
+                      (cons      (setf new-lines (nconc diff new-lines)))
+                      (otherwise (setf new-lines (list* line new-lines))))))
+             finally
+                (if (null new-lines)
+                    (return-from region-contains-region-p t)
+                    (setf lines new-lines))))
+     a))
+  nil)
+
+(defmethod region-contains-region-p ((a polyline) (b elliptical-arc))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-contains-region-p ((a elliptical-arc) (b polyline))
+  (declare (ignore a b))
+  nil)
+
+(defmethod region-contains-region-p ((a elliptical-arc) (b elliptical-arc))
+  (multiple-value-bind (cx1 cy1 rh1 rv1 phi1)
+      (ellipse-simplified-representation a)
+    (multiple-value-bind (cx2 cy2 rh2 rv2 phi2)
+        (ellipse-simplified-representation b)
+      (and (coordinate= cx1 cx2)      ; centers match
+           (coordinate= cy1 cy2)
+           (coordinate= rh1 rh2)      ; radii match
+           (coordinate= rv1 rv2)
+           (= phi1 phi2)              ; rotation match
+           (let ((a-alpha (or (ellipse-start-angle a) 0))
+                 (b-alpha (or (ellipse-start-angle b) 0))
+                 (a-omega (or (ellipse-end-angle a) (* 2 pi)))
+                 (b-omega (or (ellipse-end-angle b) (* 2 pi))))
+             (angle-contains-angle-p a-alpha a-omega b-alpha)
+             (angle-contains-angle-p a-alpha a-omega b-omega))))))
+
+;;; areas vs paths
+(defmethod region-contains-region-p ((a rectangle) (b line))
+  (and (region-contains-region-p a (line-start-point b))
+       (region-contains-region-p a (line-end-point b))))
+
+(defmethod region-contains-region-p ((a rectangle) (b polyline))
+  (map-over-polygon-coordinates
+   (lambda (x y)
+     (region-contains-position-p a x y))
+   b))
+
+(defmethod region-contains-region-p ((a rectangle) (b elliptical-arc))
+  ;; Burden of computing correct bounding rectangle with regard to
+  ;; start/end angles is left for the bounding-rectangle protocol.
+  (region-contains-region-p a (bounding-rectangle b)))
+
+(defmethod region-contains-region-p ((a polygon) (b line)))
+(defmethod region-contains-region-p ((a polygon) (b polyline)))
+(defmethod region-contains-region-p ((a polygon) (b elliptical-arc)))
+
+(defmethod region-contains-region-p ((a ellipse) (b line)))
+(defmethod region-contains-region-p ((a ellipse) (b polyline)))
+(defmethod region-contains-region-p ((a ellipse) (b elliptical-arc)))
+
+;;; areas vs areas
+(defmethod region-contains-region-p ((a rectangle) (b rectangle))
+  (multiple-value-bind (ax1 ay1 ax2 ay2) (rectangle-edges* a)
+    (multiple-value-bind (bx1 by1 bx2 by2) (rectangle-edges* b)
+      (and (coordinate<= ax1 bx1)
+           (coordinate<= ay1 by1)
+           (coordinate<= ax2 bx2)
+           (coordinate<= ay2 by2)))))
+
+(defmethod region-contains-region-p ((a rectangle) (b polygon))
+  (region-contains-region-p a (bounding-rectangle b)))
+
+(defmethod region-contains-region-p ((a rectangle) (b ellipse))
+  ;; Burden of computing correct bounding rectangle with regard to
+  ;; start/end angles is left for the bounding-rectangle protocol.
+  (region-contains-region-p a (bounding-rectangle b)))
+
+;;; FIXME the following cases are currently handled by a fallback method.
+;; (defmethod region-contains-region-p ((a polygon) (b polygon)))
+;; (defmethod region-contains-region-p ((a polygon) (b rectangle)))
+;; (defmethod region-contains-region-p ((a polygon) (b ellipse)))
+;; (defmethod region-contains-region-p ((a ellipse) (b rectangle)))
+;; (defmethod region-contains-region-p ((a ellipse) (b polygon)))
+
+(defmethod region-contains-region-p ((a ellipse) (b ellipse))
   (multiple-value-bind (bcx bcy) (ellipse-center-point* b)
     (and (region-contains-position-p a bcx bcy)
          (null (intersection-ellipse/ellipse a b))
          (or (null (ellipse-start-angle a))
-             (multiple-value-bind (sx sy) (%ellipse-angle->position a (ellipse-start-angle a))
-               (multiple-value-bind (ex ey) (%ellipse-angle->position a (ellipse-end-angle a))
-                 (multiple-value-bind (cx cy) (ellipse-center-point* a)
-                   (and (null (region-intersection b (make-line* sx sy cx cy)))
-                        (null (region-intersection b (make-line* ex ey cx cy)))))))))))
+             (nest (multiple-value-bind (sx sy)
+                       (%ellipse-angle->position a (ellipse-start-angle a)))
+                   (multiple-value-bind (ex ey)
+                       (%ellipse-angle->position a (ellipse-end-angle a)))
+                   (multiple-value-bind (cx cy)
+                       (ellipse-center-point* a)
+                     (and (null (region-intersection b (make-line* sx sy cx cy)))
+                          (null (region-intersection b (make-line* ex ey cx cy))))))))))
+
+;;; old methods (call region-intersection)
 
 ;;; Ellipse is a convex object. That Implies that if each of the rectangle
 ;;; vertexes lies inside it, then whole rectangle fits as well. We take a
 ;;; special care for ellipses with start/end angle.
-(defmethod region-contains-region-p ((a standard-ellipse) (b standard-rectangle))
+(defmethod region-contains-region-p ((a ellipse) (b rectangle))
   (with-standard-rectangle (x1 y1 x2 y2) b
     (if (null (ellipse-start-angle a))
         (and (region-contains-position-p a x1 y1)
@@ -299,7 +475,7 @@
                (fits (make-line* x2 y2 x1 y2))
                (fits (make-line* x1 y2 x1 y1)))))))
 
-(defmethod region-contains-region-p ((a standard-ellipse) (polygon standard-polygon))
+(defmethod region-contains-region-p ((a ellipse) (polygon polygon))
   (if (null (ellipse-start-angle a))
       (map-over-polygon-coordinates
        #'(lambda (x y)
@@ -307,15 +483,11 @@
              (return-from region-contains-region-p nil)))
        polygon)
       (map-over-polygon-segments
-       #'(lambda (x1 y1 x2 y2
-                  &aux (line (make-line* x1 y1 x2 y2)))
+       #'(lambda (x1 y1 x2 y2 &aux (line (make-line* x1 y1 x2 y2)))
            (unless (region-equal line (region-intersection line a))
              (return-from region-contains-region-p nil)))
        polygon))
   T)
-
-(defmethod region-contains-region-p ((a bounding-rectangle) (b point))
-  (region-contains-position-p a (point-x b) (point-y b)))
 
 
 

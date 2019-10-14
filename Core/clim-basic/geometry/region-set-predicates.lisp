@@ -40,3 +40,14 @@
 #+ (or) ;; defined in region-predicates.lisp
 (defmethod region-equal ((a bounding-rectangle) (b bounding-rectangle))
   (region-equal +nowhere+ (region-exclusive-or a b)))
+
+;; (defmethod region-intersects-region-p :around ((a region-set) (b region))
+;;   (let ((specimen (first (region-set-regions a))))
+;;     (if ()))
+;;   (map-over-region-set-regions
+;;    (lambda (region))))
+
+;;; If region-set were a point it would be canonicalized to be so.
+;; (defmethod region-contains-region-p ((a point) (b region-set))
+;;   (declare (ignore a b))
+;;   nil)
