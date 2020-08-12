@@ -34,6 +34,53 @@
           (t ; Non-standard pane designator fed to the `make-pane'
            `(make-pane ',pane :name ',name ,@options)))))
 
+(defun %generic-make-or-reinitialize-pane
+    (panes-for-layout constructor type name &rest initargs)
+  ;; If PANES-FOR-LAYOUT contains a pane for NAME, try to reinitialize
+  ;; it. Otherwise, make a new pane using CONSTRUCTOR.
+  (let ((pane-or-parent (alexandria:assoc-value
+                         panes-for-layout name :test #'eq)))
+    ;; For stream panes, NAME may be associated with an ancestor of
+    ;; the stream pane. It is also possible that the pane named NAME
+    ;; is now of a different type than before. In any case, use TYPE
+    ;; to find the descendant.
+    (if-let ((pane (when pane-or-parent
+                     (find-pane-of-type pane-or-parent type))))
+      (progn
+        (when-let ((parent (sheet-parent pane-or-parent)))
+          (sheet-disown-child parent pane-or-parent))
+        (apply #'reinitialize-instance pane initargs)
+        pane-or-parent)
+      (apply constructor :name name initargs))))
+
+(defun generate-ensure-pane-form (name form realizer-var
+                                  &optional panes-for-layout-var)
+  (destructuring-bind (pane &rest options) form
+    (flet ((generate (constructor type)
+             (if panes-for-layout-var
+                 `(%generic-make-or-reinitialize-pane
+                   ,panes-for-layout-var ,constructor ,type ',name ,@options)
+                 `(funcall ,constructor :name ',name ,@options))))
+      (cond ((and (null options) (listp pane)) ; Single form which is a function call
+             `(coerce-pane-name ,pane ',name))
+            ((eq pane :application) ; Standard pane (i.e `:application')
+             (generate ''make-clim-application-pane ''application-pane))
+            ((eq pane :interactor)
+             (generate ''make-clim-interactor-pane ''interactor-pane))
+            ((eq pane :pointer-documentation)
+             (generate ''make-clim-pointer-documentation-pane ''pointer-documentation-pane))
+            ((eq pane :command-menu)
+             (generate ''make-clim-command-menu-pane ''command-menu-pane))
+            ;; Non-standard pane designator fed to `make-pane'
+            (t
+             (alexandria:with-unique-names (pane-class-var)
+               `(let ((,pane-class-var
+                        (find-concrete-pane-class ,realizer-var ',pane)))
+                  ,(generate `(curry #'make-pane-1
+                                     ,realizer-var *application-frame*
+                                     (class-name ,pane-class-var))
+                             pane-class-var))))))))
+
 ;;; FIXME The menu-bar code in the following function is incorrect.  it
 ;;; needs to be moved to somewhere after the backend, since it depends
 ;;; on the backend chosen.
@@ -41,23 +88,27 @@
 ;;; This hack slaps a menu-bar into the start of the application-frame,
 ;;; in such a way that it is hard to find.
 (defun generate-generate-panes-form (class-name menu-bar panes layouts
-                                     pointer-documentation)
+                                     pointer-documentation reinitializep)
   (when pointer-documentation
     (setf panes (append panes
                         '((%pointer-documentation%
                            pointer-documentation-pane)))))
   `(defmethod generate-panes ((fm frame-manager) (frame ,class-name))
      (with-look-and-feel-realization (fm frame)
-       (unless (frame-panes-for-layout frame)
+       ;; Make (or reinitialize) pane instances and establish
+       ;; lexical variables so layout forms can use them.
+       (let* ,(if (and (not (null panes)) reinitializep)
+                  (alexandria:with-gensyms (old-panes-var)
+                    `((,old-panes-var (frame-panes-for-layout frame))
+                      ,@(loop for (name . form) in panes
+                              collect `(,name ,(generate-ensure-pane-form
+                                                name form 'fm old-panes-var)))))
+                  (loop for (name . form) in panes
+                        collect `(,name ,(generate-ensure-pane-form
+                                          name form 'fm))))
          (setf (frame-panes-for-layout frame)
-               (list
-                ,@(loop for (name . form) in panes
-                        collect `(cons ',name ,(generate-pane-creation-form
-                                                name form))))))
-       (let ,(loop for (name . form) in panes
-                   collect `(,name (alexandria:assoc-value
-                                    (frame-panes-for-layout frame)
-                                    ',name :test #'eq)))
+               (list ,@(loop for (name) in panes
+                             collect `(cons ',name ,name))))
          ;; [BTS] added this, but is not sure that this is correct for
          ;; adding a menu-bar transparently, should also only be done
          ;; where the exterior window system does not support menus
@@ -101,6 +152,7 @@
                  ;; :resize-frame is mentioned in a spec annotation but we don't support it
                  ;; McCLIM extensions
                  (:pointer-documentation 1)
+                 (:update-instances-on-redefinition 1)
                  ;; Default initargs
                  (:pretty-name           1)
                  ;; Common Lisp
@@ -165,6 +217,7 @@
                             geometry
                             ;; McCLIM extensions
                             pointer-documentation
+                            update-instances-on-redefinition
                             ;; Default initargs
                             (pretty-name (string-capitalize name))
                             ;; Common Lisp
@@ -177,6 +230,9 @@
     (when (eq command-definer t)
       (setf command-definer
             (alexandria:symbolicate '#:define- name '#:-command)))
+    ;; If the frame class is being (re)defined with instance updating,
+    ;; delay the redefinition notification until after all forms have
+    ;; executed.
     `(progn
        (defclass ,name ,superclasses
          ,slots
@@ -198,7 +254,8 @@
 
        ,@(when (or panes layouts)
            `(,(generate-generate-panes-form
-               name menu-bar panes layouts pointer-documentation)))
+               name menu-bar panes layouts pointer-documentation
+               update-instances-on-redefinition)))
 
        ,@(when command-table
            `((define-command-table ,@command-table)))
@@ -209,4 +266,71 @@
                    (alexandria:ensure-list name-and-options)
                  `(define-command (,name :command-table ,',(first command-table)
                                          ,@options)
-                      ,arguments ,@body))))))))
+                      ,arguments ,@body)))))
+
+       ,@(when update-instances-on-redefinition
+           `((let ((class (find-class ',name)))
+               (collect (frames)
+                 (map-over-frames (lambda (frame)
+                                    (when (typep frame class)
+                                      (frames frame))))
+                 ;; Alternatively we could add a custom argument to
+                 ;; map-over-frames called :class, then mapping would be
+                 ;; performed only over instances of said class. Then it would
+                 ;; be an implementation detail whether they are i.e stored in
+                 ;; a custom metaclass, an independent hash table or simply
+                 ;; mapped over frame-managers and ports.
+                 (handle-frame-class-redefinition (frames) class))))))))
+
+(define-event-class frame-class-redefined-event (standard-event)
+  ((%redefined-frame   :initarg :frame
+                       :reader  redefined-frame)
+   (%new-pretty-name   :initarg :new-pretty-name
+                       :reader  new-pretty-name)
+   (%new-layouts       :initarg :new-layouts
+                       :reader  new-layouts)
+   (%new-command-table :initarg :new-command-table
+                       :reader  new-command-table)))
+
+(defmethod handle-event ((sheet top-level-sheet-mixin)
+                         (event frame-class-redefined-event)
+                         &aux (frame (redefined-frame event)))
+  ;; We try to preserve the frame size. Store the current size before
+  ;; we make any changes.
+  (multiple-value-bind (width height)
+      (bounding-rectangle-size sheet)
+    (setf (frame-pretty-name   frame) (new-pretty-name   event)
+          (frame-command-table frame) (new-command-table event)
+          (%frame-layouts      frame) (new-layouts       event))
+    (let ((new-layout (first (frame-all-layouts frame))))
+      ;; Changing the layout involves signaling FRAME-LAYOUT-CHANGED
+      ;; which performs a non-local exit out of this method.
+      (if (eq (frame-current-layout frame) new-layout)
+          (when-let ((frame-manager (frame-manager frame)))
+            (generate-panes frame-manager frame)
+            (layout-frame frame width height)
+            (signal 'frame-layout-changed :frame frame))
+          (unwind-protect          ; Call LAYOUT-FRAME despite non-local exit.
+               (setf (frame-current-layout frame) new-layout)
+            (layout-frame frame width height))))))
+
+(defun handle-frame-class-redefinition (frames class)
+  (when (null frames)
+    (return-from handle-frame-class-redefinition))
+  (flet ((initarg-value (name)
+           (when-let* ((initargs (c2mop:class-default-initargs class))
+                       (initarg  (find name initargs :key #'first)))
+             (funcall (third initarg)))))
+    (let ((new-pretty-name   (initarg-value :pretty-name))
+          (new-layouts       (initarg-value :layouts))
+          (new-command-table (initarg-value :command-table)))
+      (dolist (frame frames)
+        (with-simple-restart (continue "~@<Skip updating frame ~A~@:>" frame)
+          (event-queue-append
+           (frame-event-queue frame)
+           (make-instance 'frame-class-redefined-event
+                          :sheet             (frame-top-level-sheet frame)
+                          :frame             frame
+                          :new-pretty-name   new-pretty-name
+                          :new-layouts       new-layouts
+                          :new-command-table new-command-table)))))))
