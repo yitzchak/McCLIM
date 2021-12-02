@@ -330,4 +330,6 @@ in an equalp hash table")
             (loop for (record bbox) in move-overlapping
                   do (setf regions (region-union regions bbox)))
             (map-over-region-set-regions #'clear-bbox regions)
-            (replay history stream regions)))))))
+            (clear-bbox (sheet-region stream))
+            (replay history stream +everywhere+ ;regions
+                    )))))))

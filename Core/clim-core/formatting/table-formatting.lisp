@@ -559,7 +559,7 @@
 
         ;; Finally just put the cells where they belong.
 
-        (multiple-value-bind (cx cy) (stream-cursor-position stream)
+        (multiple-value-bind (cx cy) (output-record-position table-record)
           (loop for row across rows
              for y = cy then (+ y h y-spacing)
              for h across heights
